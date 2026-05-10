@@ -1,3 +1,2 @@
 # Trigonometry Practice
-## Trust!
-### by zaysky?
+###     by zaysky?
