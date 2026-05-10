@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fighter - c²</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #1a1a2e;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            display: block;
+            background: #16213e;
+        }
+        #ui {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div id="ui"></div>
+
+    <script>
+const CANVAS = document.getElementById('canvas');
+const CTX = CANVAS.getContext('2d');
+const UI = document.getElementById('ui');
+
+CANVAS.width = window.innerWidth;
+CANVAS.height = window.innerHeight;
+
+const WIDTH = CANVAS.width;
+const HEIGHT = CANVAS.height;
+
+// Physics
+const GRAVITY = 2000;
+const FRICTION = 0.92;
+const PLAYER_SPEED = 400;
+const JUMP_VELOCITY = -1000;
+
+// Gameplay
+const BASE_KB = 300;
+const KB_SCALING = 12;
+const KB_EXPONENT = 1.4;
+const OUT_OF_BOUNDS = 300;
+
+// Game state
+let gameState = 'cardSelect'; // cardSelect, playing, gameOver
+let currentCardPicker = 1;
+let player1Stocks = 3;
+let player2Stocks = 3;
+
+// Collections
+let projectiles = [];
+let swords = [];
+let platforms = [];
+let effects = [];
+let gameOverTimer = 0;
+let winner = null;
+
+// Cards
+const CARDS = {
+    'Sword': {
+        name: 'Sword',
+        description: 'Change weapon to sword.',
+        effect: (p) => p.mainWeapon = 'sword',
+        color: '#ffb4b4',
+        type: 'weapon',
+        requirements: null
+    },
+    'Gun': {
+        name: 'Gun',
+        description: 'Change weapon to gun.',
+        effect: (p) => p.mainWeapon = 'gun',
+        color: '#b4b4ff',
+        type: 'weapon',
+        requirements: null
+    },
+    'Grenade': {
+        name: 'Grenade',
+        description: 'Change weapon to grenade.',
+        effect: (p) => p.mainWeapon = 'grenade',
+        color: '#ffb450',
+        type: 'weapon',
+        requirements: null
+    },
+    'Damage': {
+        name: 'Damage',
+        description: '+2 to damage.',
+        effect: (p) => p.damage += 2,
+        color: '#64c864',
+        type: 'upgrade',
+        requirements: null
+    },
+    'Speed': {
+        name: 'Speed',
+        description: 'Move faster.',
+        effect: (p) => p.speed += 100,
+        color: '#64c864',
+        type: 'upgrade',
+        requirements: null
+    }
+};
+
+// Get 3 random cards
+function getCardChoices() {
+    const keys = Object.keys(CARDS);
+    const shuffled = keys.sort(() => Math.random() - 0.5);
+    return shuffled.slice(0, 3);
+}
+
+let cardChoices = [];
+
+// =====================
+// CLASSES
+// =====================
+
+class Player {
+    constructor(x, y, color, controls) {
+        this.x = x;
+        this.y = y;
+        this.width = 40;
+        this.height = 60;
+        this.color = color;
+        this.controls = controls;
+        this.vx = 0;
+        this.vy = 0;
+        this.percent = 0;
+        this.onGround = false;
+        this.jumpsLeft = 2;
+        this.maxJumps = 2;
+        this.mainWeapon = 'gun';
+        this.damage = 4;
+        this.speed = PLAYER_SPEED;
+        this.facing = 1;
+        this.cooldown = 0;
+        this.hitstun = 0;
+        this.invul = 0;
+        this.cards = [];
+        this.lastJumpKey = false;
+    }
+
+    update(dt, platforms) {
+        // Cooldowns
+        if (this.cooldown > 0) this.cooldown -= dt;
+        if (this.hitstun > 0) this.hitstun -= dt;
+        if (this.invul > 0) this.invul -= dt;
+
+        // Gravity
+        this.vy += GRAVITY * dt;
+        this.onGround = false;
+
+        // Horizontal collision
+        this.x += this.vx * dt;
+        for (let p of platforms) {
+            if (this.collidesWith(p)) {
+                if (this.vx > 0) this.x = p.x - this.width;
+                else if (this.vx < 0) this.x = p.x + p.width;
+                this.vx = 0;
+            }
+        }
+
+        // Vertical collision
+        this.y += this.vy * dt;
+        for (let p of platforms) {
+            if (this.collidesWith(p)) {
+                if (this.vy > 0) {
+                    this.y = p.y - this.height;
+                    this.vy = 0;
+                    this.onGround = true;
+                    this.jumpsLeft = this.maxJumps;
+                } else if (this.vy < 0) {
+                    this.y = p.y + p.height;
+                    this.vy = 0;
+                }
+            }
+        }
+
+        // Friction
+        if (this.onGround) {
+            this.vx *= FRICTION;
+        }
+    }
+
+    collidesWith(platform) {
+        return (
+            this.x < platform.x + platform.width &&
+            this.x + this.width > platform.x &&
+            this.y < platform.y + platform.height &&
+            this.y + this.height > platform.y
+        );
+    }
+
+    handleInput(keys) {
+        if (this.hitstun > 0) return;
+
+        // Movement
+        if (keys[this.controls.left]) {
+            this.vx = -this.speed;
+            this.facing = -1;
+        } else if (keys[this.controls.right]) {
+            this.vx = this.speed;
+            this.facing = 1;
+        }
+
+        // Jump
+        const jumpPressed = keys[this.controls.jump] && !this.lastJumpKey;
+        this.lastJumpKey = keys[this.controls.jump];
+
+        if (jumpPressed && this.jumpsLeft > 0) {
+            this.vy = JUMP_VELOCITY;
+            this.jumpsLeft--;
+        }
+    }
+
+    draw() {
+        const color = this.invul > 0 ? '#ffffff' : this.color;
+        CTX.fillStyle = color;
+        CTX.fillRect(this.x, this.y, this.width, this.height);
+
+        // Percent display
+        CTX.fillStyle = '#ffffff';
+        CTX.font = '20px Arial';
+        CTX.fillText(`${Math.floor(this.percent)}%`, this.x + 5, this.y - 10);
+    }
+}
+
+class Projectile {
+    constructor(x, y, direction, owner) {
+        this.x = x;
+        this.y = y;
+        this.width = 10;
+        this.height = 5;
+        this.vx = 1600 * direction;
+        this.vy = 0;
+        this.owner = owner;
+        this.bounces = 0;
+    }
+
+    update(dt, platforms) {
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+
+        // Platform collision
+        for (let p of platforms) {
+            if (this.collidesWith(p)) {
+                if (this.bounces > 0) {
+                    if (Math.abs(this.vy) > Math.abs(this.vx)) {
+                        this.vy *= -1;
+                    } else {
+                        this.vx *= -1;
+                    }
+                    this.bounces--;
+                } else {
+                    return false;
+                }
+            }
+        }
+
+        return this.x > -100 && this.x < WIDTH + 100;
+    }
+
+    collidesWith(platform) {
+        return (
+            this.x < platform.x + platform.width &&
+            this.x + this.width > platform.x &&
+            this.y < platform.y + platform.height &&
+            this.y + this.height > platform.y
+        );
+    }
+
+    draw() {
+        CTX.fillStyle = '#ffff00';
+        CTX.fillRect(this.x, this.y, this.width, this.height);
+    }
+}
+
+class Sword {
+    constructor(owner) {
+        this.owner = owner;
+        this.elapsed = 0;
+        this.duration = 0.25;
+        this.radius = 80;
+    }
+
+    update(dt, target) {
+        this.elapsed += dt;
+        return this.elapsed < this.duration && this.checkHit(target);
+    }
+
+    checkHit(target) {
+        const dist = Math.hypot(
+            target.x + target.width/2 - (this.owner.x + this.owner.width/2),
+            target.y + target.height/2 - (this.owner.y + this.owner.height/2)
+        );
+
+        if (dist < this.radius && target.invul <= 0) {
+            target.percent += this.owner.damage * 2;
+            target.hitstun = 0.25;
+            target.invul = 0.3;
+            target.onGround = false;
+
+            const dx = target.x - this.owner.x;
+            const direction = dx > 0 ? 1 : -1;
+            const knockback = BASE_KB + Math.pow(target.percent, KB_EXPONENT) * KB_SCALING;
+            target.vx = direction * knockback;
+            target.vy = -(400 + target.percent * 4);
+
+            return false; // Remove sword after hit
+        }
+
+        return true;
+    }
+
+    draw() {
+        // Simple line representation
+        CTX.strokeStyle = '#ffffff';
+        CTX.lineWidth = 5;
+        CTX.beginPath();
+        CTX.moveTo(this.owner.x + this.owner.width/2, this.owner.y + this.owner.height/2);
+        CTX.lineTo(
+            this.owner.x + this.owner.width/2 + this.radius * this.owner.facing,
+            this.owner.y + this.owner.height/2
+        );
+        CTX.stroke();
+    }
+}
+
+class Platform {
+    constructor(x, y, width, height) {
+        this.x = x;
+        this.y = y;
+        this.width = width;
+        this.height = height;
+    }
+
+    draw() {
+        CTX.fillStyle = '#c8c8c8';
+        CTX.fillRect(this.x, this.y, this.width, this.height);
+    }
+}
+
+// =====================
+// MAP GENERATION
+// =====================
+
+function generateMap() {
+    const platforms = [];
+
+    // Main platform
+    const mainWidth = WIDTH / 2;
+    const mainHeight = HEIGHT / 20;
+    const mainX = WIDTH / 2 - mainWidth / 2;
+    const mainY = HEIGHT * 3 / 4;
+
+    platforms.push(new Platform(mainX, mainY, mainWidth, mainHeight));
+
+    // Random platforms
+    const count = Math.floor(Math.random() * 3) + 2;
+    for (let i = 0; i < count; i++) {
+        const type = Math.random() > 0.5 ? 'platform' : 'wall';
+        let w, h;
+
+        if (type === 'wall') {
+            w = Math.random() * 15 + 10;
+            h = Math.random() * 100 + 120;
+        } else {
+            w = Math.random() * 180 + 120;
+            h = Math.random() * 15 + 10;
+        }
+
+        const x = Math.random() * (WIDTH - w);
+        const y = Math.random() * (HEIGHT - 200) + 50;
+
+        platforms.push(new Platform(x, y, w, h));
+    }
+
+    return platforms;
+}
+
+// =====================
+// SETUP
+// =====================
+
+let player1 = new Player(100, 100, '#ff6464', {
+    left: 'a',
+    right: 'd',
+    jump: 'w',
+    action: 'f'
+});
+
+let player2 = new Player(WIDTH - 140, 100, '#6464ff', {
+    left: 'ArrowLeft',
+    right: 'ArrowRight',
+    jump: 'ArrowUp',
+    action: 'Enter'
+});
+
+platforms = generateMap();
+
+// Spawn players on main platform
+function spawnPlayers() {
+    player1.x = platforms[0].x + 50;
+    player1.y = platforms[0].y - 60;
+    player1.vx = 0;
+    player1.vy = 0;
+    player1.percent = 0;
+    player1.onGround = false;
+    player1.jumpsLeft = player1.maxJumps;
+
+    player2.x = platforms[0].x + platforms[0].width - 90;
+    player2.y = platforms[0].y - 60;
+    player2.vx = 0;
+    player2.vy = 0;
+    player2.percent = 0;
+    player2.onGround = false;
+    player2.jumpsLeft = player2.maxJumps;
+}
+
+spawnPlayers();
+cardChoices = getCardChoices();
+
+// =====================
+// INPUT HANDLING
+// =====================
+
+const keysPressed = {};
+
+window.addEventListener('keydown', (e) => {
+    keysPressed[e.key] = true;
+
+    // Card selection
+    if (gameState === 'cardSelect') {
+        if (e.key === '1' || e.key === '2' || e.key === '3') {
+            const idx = parseInt(e.key) - 1;
+            if (idx < cardChoices.length) {
+                const cardKey = cardChoices[idx];
+                const card = CARDS[cardKey];
+                const player = currentCardPicker === 1 ? player1 : player2;
+
+                // Apply card effect
+                card.effect(player);
+                player.cards.push(cardKey);
+
+                // Move to next player
+                if (currentCardPicker === 1) {
+                    currentCardPicker = 2;
+                    cardChoices = getCardChoices();
+                } else {
+                    currentCardPicker = 0;
+                    gameState = 'playing';
+                    spawnPlayers();
+                }
+            }
+        }
+    }
+
+    // Action button
+    if (gameState === 'playing') {
+        if (e.key === player1.controls.action && player1.cooldown <= 0) {
+            performAction(player1, player2);
+        }
+        if (e.key === player2.controls.action && player2.cooldown <= 0) {
+            performAction(player2, player1);
+        }
+    }
+});
+
+window.addEventListener('keyup', (e) => {
+    keysPressed[e.key] = false;
+});
+
+function performAction(player, target) {
+    if (player.mainWeapon === 'gun') {
+        const proj = new Projectile(
+            player.x + player.width / 2,
+            player.y + player.height / 2,
+            player.facing,
+            player
+        );
+        projectiles.push(proj);
+        player.cooldown = 0.2;
+    } else if (player.mainWeapon === 'sword') {
+        const sword = new Sword(player);
+        swords.push(sword);
+        player.cooldown = 0.5;
+    }
+}
+
+// =====================
+// GAME LOOP
+// =====================
+
+function checkDeath(player, playerNum) {
+    if (
+        player.y > HEIGHT + OUT_OF_BOUNDS ||
+        player.y < -OUT_OF_BOUNDS ||
+        player.x > WIDTH + OUT_OF_BOUNDS ||
+        player.x < -OUT_OF_BOUNDS
+    ) {
+        if (playerNum === 1) {
+            player1Stocks--;
+        } else {
+            player2Stocks--;
+        }
+
+        if (player1Stocks <= 0 || player2Stocks <= 0) {
+            gameState = 'gameOver';
+            winner = player1Stocks <= 0 ? 2 : 1;
+            gameOverTimer = 3;
+        } else {
+            platforms = generateMap();
+            spawnPlayers();
+            projectiles = [];
+            swords = [];
+            currentCardPicker = 1;
+            cardChoices = getCardChoices();
+            gameState = 'cardSelect';
+        }
+    }
+}
+
+let lastTime = Date.now();
+
+function gameLoop() {
+    const now = Date.now();
+    const dt = Math.min((now - lastTime) / 1000, 0.016);
+    lastTime = now;
+
+    CTX.fillStyle = '#16213e';
+    CTX.fillRect(0, 0, WIDTH, HEIGHT);
+
+    if (gameState === 'cardSelect') {
+        drawCardSelect();
+    } else if (gameState === 'playing') {
+        // Update
+        player1.handleInput(keysPressed);
+        player2.handleInput(keysPressed);
+
+        player1.update(dt, platforms);
+        player2.update(dt, platforms);
+
+        // Projectiles
+        for (let i = projectiles.length - 1; i >= 0; i--) {
+            const proj = projectiles[i];
+            const target = proj.owner === player1 ? player2 : player1;
+
+            if (!proj.update(dt, platforms)) {
+                projectiles.splice(i, 1);
+                continue;
+            }
+
+            // Hit detection
+            if (proj.x < target.x + target.width &&
+                proj.x + proj.width > target.x &&
+                proj.y < target.y + target.height &&
+                proj.y + proj.height > target.y &&
+                target.invul <= 0) {
+                
+                target.percent += proj.owner.damage;
+                target.hitstun = 0.25;
+                target.invul = 0.3;
+                
+                const dx = target.x - proj.owner.x;
+                const direction = dx > 0 ? 1 : -1;
+                const knockback = BASE_KB + Math.pow(target.percent, KB_EXPONENT) * KB_SCALING;
+                target.vx = direction * knockback;
+                target.vy = -(400 + target.percent * 4);
+                target.onGround = false;
+                
+                projectiles.splice(i, 1);
+            }
+        }
+
+        // Swords
+        for (let i = swords.length - 1; i >= 0; i--) {
+            const sword = swords[i];
+            const target = sword.owner === player1 ? player2 : player1;
+
+            if (!sword.update(dt, target)) {
+                swords.splice(i, 1);
+            }
+        }
+
+        // Check deaths
+        checkDeath(player1, 1);
+        checkDeath(player2, 2);
+
+        // Draw
+        for (let p of platforms) p.draw();
+        for (let proj of projectiles) proj.draw();
+        for (let sword of swords) sword.draw();
+
+        player1.draw();
+        player2.draw();
+
+        // UI
+        CTX.fillStyle = '#ffffff';
+        CTX.font = '24px Arial';
+        CTX.fillText(`P1 Stocks: ${player1Stocks}`, 20, 30);
+        CTX.fillText(`P2 Stocks: ${player2Stocks}`, WIDTH - 200, 30);
+
+    } else if (gameState === 'gameOver') {
+        gameOverTimer -= dt;
+
+        CTX.fillStyle = '#ffffff';
+        CTX.font = 'bold 80px Arial';
+        CTX.textAlign = 'center';
+        CTX.fillText(`PLAYER ${winner} WINS!`, WIDTH / 2, HEIGHT / 2);
+
+        if (gameOverTimer <= 0) {
+            // Reset
+            player1Stocks = 3;
+            player2Stocks = 3;
+            player1.cards = [];
+            player2.cards = [];
+            player1.mainWeapon = 'gun';
+            player2.mainWeapon = 'gun';
+            player1.damage = 4;
+            player2.damage = 4;
+            player1.speed = PLAYER_SPEED;
+            player2.speed = PLAYER_SPEED;
+            projectiles = [];
+            swords = [];
+            platforms = generateMap();
+            spawnPlayers();
+            gameState = 'cardSelect';
+            currentCardPicker = 1;
+            cardChoices = getCardChoices();
+        }
+
+        CTX.textAlign = 'left';
+    }
+
+    requestAnimationFrame(gameLoop);
+}
+
+function drawCardSelect() {
+    CTX.fillStyle = '#1a1a2e';
+    CTX.fillRect(0, 0, WIDTH, HEIGHT);
+
+    CTX.fillStyle = '#ffffff';
+    CTX.font = '40px Arial';
+    CTX.textAlign = 'center';
+    CTX.fillText(`PLAYER ${currentCardPicker}, Choose a card (Press 1, 2, or 3)`, WIDTH / 2, 60);
+
+    const cardWidth = 180;
+    const cardHeight = 250;
+    const startX = WIDTH / 2 - (cardWidth * 1.5 + 30);
+    const startY = HEIGHT / 2 - cardHeight / 2;
+
+    for (let i = 0; i < cardChoices.length; i++) {
+        const cardKey = cardChoices[i];
+        const card = CARDS[cardKey];
+        const x = startX + i * (cardWidth + 30);
+        const y = startY;
+
+        // Card background
+        CTX.fillStyle = card.color;
+        CTX.fillRect(x, y, cardWidth, cardHeight);
+
+        // Card border
+        CTX.strokeStyle = '#ffffff';
+        CTX.lineWidth = 3;
+        CTX.strokeRect(x, y, cardWidth, cardHeight);
+
+        // Card text
+        CTX.fillStyle = '#000000';
+        CTX.font = 'bold 20px Arial';
+        CTX.textAlign = 'center';
+        CTX.fillText(card.name, x + cardWidth / 2, y + 30);
+
+        CTX.font = '14px Arial';
+        CTX.fillStyle = '#333333';
+        const lines = card.description.match(/.{1,20}/g) || [];
+        lines.forEach((line, idx) => {
+            CTX.fillText(line, x + cardWidth / 2, y + 70 + idx * 20);
+        });
+
+        // Number indicator
+        CTX.fillStyle = '#ffffff';
+        CTX.font = 'bold 24px Arial';
+        CTX.fillText(i + 1, x + 15, y + 25);
+    }
+
+    CTX.textAlign = 'left';
+}
+
+gameLoop();
+    </script>
+</body>
+</html>
