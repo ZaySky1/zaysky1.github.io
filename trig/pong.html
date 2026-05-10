@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PONG - 2 Player</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0a0e27;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
+        }
+        canvas {
+            background: #1a2f4d;
+            border: 3px solid #00ff88;
+            display: block;
+            box-shadow: 0 0 20px rgba(0, 255, 136, 0.5);
+        }
+        #ui {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+            color: #00ff88;
+            font-size: 18px;
+            padding: 20px;
+        }
+        .score-container {
+            display: flex;
+            justify-content: space-between;
+            font-size: 48px;
+            font-weight: bold;
+        }
+        .instructions {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            font-size: 14px;
+            color: #00ff88;
+            max-width: 300px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div id="ui">
+        <div class="score-container">
+            <div>P1: <span id="p1-score">0</span></div>
+            <div style="text-align: center;" id="status">PRESS SPACE TO START</div>
+            <div>P2: <span id="p2-score">0</span></div>
+        </div>
+    </div>
+    <div class="instructions">
+        <strong>P1 Controls:</strong> W/S to move<br>
+        <strong>P2 Controls:</strong> ↑/↓ to move<br>
+        <strong>SPACE</strong> to start/restart<br>
+        Ball speeds up every hit!
+    </div>
+
+    <script>
+const CANVAS = document.getElementById('canvas');
+const CTX = CANVAS.getContext('2d');
+
+CANVAS.width = 1000;
+CANVAS.height = 600;
+
+const WIDTH = CANVAS.width;
+const HEIGHT = CANVAS.height;
+
+// Game state
+let gameActive = false;
+let p1Score = 0;
+let p2Score = 0;
+
+// Paddle properties
+const PADDLE_WIDTH = 15;
+const PADDLE_HEIGHT = 100;
+const PADDLE_SPEED = 400;
+
+// Ball properties
+const BALL_RADIUS = 8;
+const BALL_SPEED = 350;
+const MAX_BALL_SPEED = 700;
+const BALL_ACCELERATION = 1.05;
+
+class Paddle {
+    constructor(x, isP1) {
+        this.x = x;
+        this.y = HEIGHT / 2 - PADDLE_HEIGHT / 2;
+        this.width = PADDLE_WIDTH;
+        this.height = PADDLE_HEIGHT;
+        this.vy = 0;
+        this.isP1 = isP1;
+    }
+
+    handleInput(keys) {
+        const upKey = this.isP1 ? 'w' : 'ArrowUp';
+        const downKey = this.isP1 ? 's' : 'ArrowDown';
+
+        this.vy = 0;
+
+        if (keys[upKey]) {
+            this.vy = -PADDLE_SPEED;
+        }
+        if (keys[downKey]) {
+            this.vy = PADDLE_SPEED;
+        }
+    }
+
+    update(dt) {
+        this.y += this.vy * dt;
+
+        // Clamp to screen
+        if (this.y < 0) this.y = 0;
+        if (this.y + this.height > HEIGHT) {
+            this.y = HEIGHT - this.height;
+        }
+    }
+
+    draw() {
+        CTX.fillStyle = this.isP1 ? '#ff0088' : '#00ff88';
+        CTX.fillRect(this.x, this.y, this.width, this.height);
+        
+        // Glow effect
+        CTX.shadowColor = this.isP1 ? 'rgba(255, 0, 136, 0.8)' : 'rgba(0, 255, 136, 0.8)';
+        CTX.shadowBlur = 10;
+    }
+
+    getCenter() {
+        return this.y + this.height / 2;
+    }
+}
+
+class Ball {
+    constructor() {
+        this.x = WIDTH / 2;
+        this.y = HEIGHT / 2;
+        this.vx = BALL_SPEED * (Math.random() > 0.5 ? 1 : -1);
+        this.vy = (Math.random() - 0.5) * BALL_SPEED;
+    }
+
+    update(dt, p1, p2) {
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+
+        // Top/bottom collision
+        if (this.y - BALL_RADIUS < 0 || this.y + BALL_RADIUS > HEIGHT) {
+            this.vy *= -1;
+            this.y = this.y - BALL_RADIUS < 0 ? BALL_RADIUS : HEIGHT - BALL_RADIUS;
+        }
+
+        // P1 paddle collision
+        if (this.checkPaddleCollision(p1)) {
+            this.hitPaddle(p1, true);
+        }
+
+        // P2 paddle collision
+        if (this.checkPaddleCollision(p2)) {
+            this.hitPaddle(p2, false);
+        }
+
+        // Scoring
+        if (this.x - BALL_RADIUS < 0) {
+            return 'p2'; // P2 scores
+        }
+        if (this.x + BALL_RADIUS > WIDTH) {
+            return 'p1'; // P1 scores
+        }
+
+        return null;
+    }
+
+    checkPaddleCollision(paddle) {
+        return (
+            this.x - BALL_RADIUS < paddle.x + paddle.width &&
+            this.x + BALL_RADIUS > paddle.x &&
+            this.y - BALL_RADIUS < paddle.y + paddle.height &&
+            this.y + BALL_RADIUS > paddle.y
+        );
+    }
+
+    hitPaddle(paddle, isP1) {
+        // Push ball out
+        if (isP1) {
+            this.x = paddle.x + paddle.width + BALL_RADIUS;
+        } else {
+            this.x = paddle.x - BALL_RADIUS;
+        }
+
+        // Reverse X velocity
+        this.vx *= -1;
+
+        // Add paddle spin (Y velocity affected by paddle movement)
+        const paddleCenter = paddle.getCenter();
+        const ballRelativeY = this.y - paddleCenter;
+        const maxAngle = Math.PI / 4; // 45 degrees
+        const spinAmount = (ballRelativeY / (paddle.height / 2)) * maxAngle;
+
+        this.vy = Math.sin(spinAmount) * this.vx;
+
+        // Speed up ball
+        const currentSpeed = Math.hypot(this.vx, this.vy);
+        if (currentSpeed < MAX_BALL_SPEED) {
+            const speedMultiplier = BALL_ACCELERATION;
+            this.vx *= speedMultiplier;
+            this.vy *= speedMultiplier;
+        }
+    }
+
+    draw() {
+        CTX.fillStyle = '#ffffff';
+        CTX.shadowColor = 'rgba(255, 255, 255, 0.8)';
+        CTX.shadowBlur = 20;
+        CTX.beginPath();
+        CTX.arc(this.x, this.y, BALL_RADIUS, 0, Math.PI * 2);
+        CTX.fill();
+    }
+
+    reset() {
+        this.x = WIDTH / 2;
+        this.y = HEIGHT / 2;
+        this.vx = BALL_SPEED * (Math.random() > 0.5 ? 1 : -1);
+        this.vy = (Math.random() - 0.5) * BALL_SPEED;
+    }
+}
+
+// Initialize
+const p1 = new Paddle(20, true);
+const p2 = new Paddle(WIDTH - 20 - PADDLE_WIDTH, false);
+let ball = new Ball();
+
+const keysPressed = {};
+
+window.addEventListener('keydown', (e) => {
+    keysPressed[e.key.toLowerCase()] = true;
+    keysPressed[e.key] = true;
+
+    if (e.key === ' ') {
+        e.preventDefault();
+        gameActive = !gameActive;
+        if (gameActive) {
+            ball.reset();
+        }
+    }
+});
+
+window.addEventListener('keyup', (e) => {
+    keysPressed[e.key.toLowerCase()] = false;
+    keysPressed[e.key] = false;
+});
+
+function updateUI() {
+    document.getElementById('p1-score').textContent = p1Score;
+    document.getElementById('p2-score').textContent = p2Score;
+
+    const statusEl = document.getElementById('status');
+    if (!gameActive) {
+        statusEl.textContent = 'PRESS SPACE TO START';
+    } else {
+        statusEl.textContent = '▮ PLAYING ▮';
+    }
+}
+
+let lastTime = Date.now();
+
+function gameLoop() {
+    const now = Date.now();
+    const dt = Math.min((now - lastTime) / 1000, 0.016);
+    lastTime = now;
+
+    // Clear canvas
+    CTX.fillStyle = '#1a2f4d';
+    CTX.fillRect(0, 0, WIDTH, HEIGHT);
+
+    // Draw center line
+    CTX.strokeStyle = '#00ff88';
+    CTX.setLineDash([10, 10]);
+    CTX.lineWidth = 2;
+    CTX.beginPath();
+    CTX.moveTo(WIDTH / 2, 0);
+    CTX.lineTo(WIDTH / 2, HEIGHT);
+    CTX.stroke();
+    CTX.setLineDash([]);
+
+    if (gameActive) {
+        // Update
+        p1.handleInput(keysPressed);
+        p2.handleInput(keysPressed);
+
+        p1.update(dt);
+        p2.update(dt);
+
+        const scorer = ball.update(dt, p1, p2);
+        if (scorer) {
+            if (scorer === 'p1') {
+                p1Score++;
+            } else {
+                p2Score++;
+            }
+            gameActive = false;
+            ball.reset();
+            updateUI();
+        }
+    } else {
+        // Still allow paddle movement during pause
+        p1.handleInput(keysPressed);
+        p2.handleInput(keysPressed);
+        p1.update(dt);
+        p2.update(dt);
+    }
+
+    // Draw
+    CTX.shadowColor = 'transparent';
+    p1.draw();
+    p2.draw();
+    ball.draw();
+
+    updateUI();
+    requestAnimationFrame(gameLoop);
+}
+
+updateUI();
+gameLoop();
+    </script>
+</body>
+</html>
