@@ -1,1 +1,919 @@
-# will make later
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>c² - HTML Fighting Game</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #1a1a2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: Arial, sans-serif;
+            color: white;
+        }
+
+        #gameContainer {
+            position: relative;
+            width: 100%;
+            height: 100vh;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            background: #0f3460;
+        }
+
+        #ui {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+        }
+
+        .stock-display {
+            position: absolute;
+            font-size: 24px;
+            font-weight: bold;
+        }
+
+        #p1Stock {
+            top: 20px;
+            left: 20px;
+            color: #ff6464;
+        }
+
+        #p2Stock {
+            top: 20px;
+            right: 20px;
+            color: #6464ff;
+        }
+
+        .percent-display {
+            position: absolute;
+            font-size: 48px;
+            font-weight: bold;
+        }
+
+        #p1Percent {
+            bottom: 20px;
+            left: 20px;
+            color: #ff6464;
+        }
+
+        #p2Percent {
+            bottom: 20px;
+            right: 20px;
+            color: #6464ff;
+        }
+
+        /* CARD SELECTION MODAL */
+        #cardModal {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+
+        #cardModal.active {
+            display: flex;
+        }
+
+        #cardTitle {
+            font-size: 32px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        #cardContainer {
+            display: flex;
+            gap: 30px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .card {
+            width: 180px;
+            height: 250px;
+            border-radius: 8px;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 3px solid white;
+            text-align: center;
+        }
+
+        .card:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 20px rgba(255, 255, 255, 0.5);
+        }
+
+        .card-name {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .card-desc {
+            font-size: 12px;
+            flex-grow: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #gameOverModal {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 999;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+
+        #gameOverModal.active {
+            display: flex;
+        }
+
+        #gameOverText {
+            font-size: 72px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        #restartButton {
+            padding: 15px 40px;
+            font-size: 20px;
+            background: #0f9;
+            color: #000;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        #restartButton:hover {
+            background: #0f6;
+        }
+
+        .controls-info {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 12px;
+            opacity: 0.6;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <div id="ui">
+            <div id="p1Stock" class="stock-display">P1: 3</div>
+            <div id="p2Stock" class="stock-display">P2: 3</div>
+            <div id="p1Percent" class="percent-display">0%</div>
+            <div id="p2Percent" class="percent-display">0%</div>
+        </div>
+
+        <div id="cardModal">
+            <div id="cardTitle">Choose a Card</div>
+            <div id="cardContainer"></div>
+        </div>
+
+        <div id="gameOverModal">
+            <div id="gameOverText">PLAYER 1 WINS!</div>
+            <button id="restartButton">Play Again</button>
+        </div>
+
+        <div class="controls-info">
+            <p><strong>P1:</strong> A/D Move | W Jump | F Attack</p>
+            <p><strong>P2:</strong> ← → Move | ↑ Jump | ENTER Attack</p>
+        </div>
+    </div>
+
+    <script>
+        // =====================
+        // CANVAS & SETUP
+        // =====================
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        const WIDTH = canvas.width;
+        const HEIGHT = canvas.height;
+
+        let gameRunning = true;
+        let frameTime = 0;
+        const FPS = 60;
+        const DT = 1 / FPS;
+
+        // =====================
+        // CONSTANTS
+        // =====================
+        const GRAVITY = 2000;
+        const PLAYER_SPEED = 400;
+        const JUMP_VELOCITY = -1000;
+        const BASE_KB = 300;
+        const KB_SCALING = 12;
+        const KB_EXPONENT = 1.4;
+
+        // =====================
+        // CARDS
+        // =====================
+        const CARDS = {
+            "Gun": {
+                name: "Gun",
+                desc: "Shoot bullets",
+                color: "rgb(180, 180, 255)",
+                type: "weapon",
+                effect: (p) => p.weapon = "gun"
+            },
+            "Sword": {
+                name: "Sword",
+                desc: "Swing a sword",
+                color: "rgb(255, 180, 180)",
+                type: "weapon",
+                effect: (p) => p.weapon = "sword"
+            },
+            "Grenade": {
+                name: "Grenade",
+                desc: "Throw grenades",
+                color: "rgb(255, 150, 50)",
+                type: "weapon",
+                effect: (p) => p.weapon = "grenade"
+            },
+            "Damage": {
+                name: "Damage",
+                desc: "+2 damage",
+                color: "rgb(100, 200, 100)",
+                effect: (p) => p.damage += 2
+            },
+            "Speed": {
+                name: "Speed",
+                desc: "Move faster",
+                color: "rgb(100, 200, 100)",
+                effect: (p) => p.speed += 100
+            },
+            "Reach": {
+                name: "Reach",
+                desc: "Longer sword range",
+                color: "rgb(100, 150, 255)",
+                req: "sword",
+                effect: (p) => p.swordRange = (p.swordRange || 80) + 30
+            },
+            "Multishot": {
+                name: "Multishot",
+                desc: "Shoot 2 bullets",
+                color: "rgb(100, 150, 255)",
+                req: "gun",
+                effect: (p) => p.multishot = (p.multishot || 1) + 1
+            }
+        };
+
+        // =====================
+        // PLAYER CLASS
+        // =====================
+        class Player {
+            constructor(x, y, color, controls) {
+                this.x = x;
+                this.y = y;
+                this.width = 40;
+                this.height = 60;
+                this.color = color;
+                this.controls = controls;
+                this.velX = 0;
+                this.velY = 0;
+                this.onGround = false;
+                this.jumpsLeft = 2;
+                this.maxJumps = 2;
+                this.damage = 4;
+                this.percent = 0;
+                this.cooldown = 0;
+                this.facing = 1;
+                this.hitstun = 0;
+                this.invul = 0;
+                this.weapon = "gun";
+                this.cards = [];
+                this.multishot = 1;
+                this.swordRange = 80;
+                this.speed = PLAYER_SPEED;
+            }
+
+            update(dt, platforms) {
+                // Cooldowns
+                this.cooldown = Math.max(0, this.cooldown - dt);
+                this.hitstun = Math.max(0, this.hitstun - dt);
+                this.invul = Math.max(0, this.invul - dt);
+
+                // Gravity
+                this.velY += GRAVITY * dt;
+                this.onGround = false;
+
+                // Horizontal movement
+                this.x += this.velX * dt;
+                for (let p of platforms) {
+                    if (this.collidesWith(p)) {
+                        if (this.velX > 0) {
+                            this.x = p.x - this.width;
+                        } else {
+                            this.x = p.x + p.width;
+                        }
+                        this.velX = 0;
+                    }
+                }
+
+                // Vertical movement
+                this.y += this.velY * dt;
+                for (let p of platforms) {
+                    if (this.collidesWith(p)) {
+                        if (this.velY > 0) {
+                            this.y = p.y - this.height;
+                            this.onGround = true;
+                            this.jumpsLeft = this.maxJumps;
+                        } else {
+                            this.y = p.y + p.height;
+                            this.velY = 0;
+                        }
+                    }
+                }
+
+                // Out of bounds
+                if (this.y > HEIGHT + 200) {
+                    return false;
+                }
+                return true;
+            }
+
+            collidesWith(rect) {
+                return !(this.x + this.width < rect.x ||
+                         this.x > rect.x + rect.width ||
+                         this.y + this.height < rect.y ||
+                         this.y > rect.y + rect.height);
+            }
+
+            draw() {
+                const alpha = this.invul > 0 ? 0.5 : 1;
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        // =====================
+        // PROJECTILE CLASSES
+        // =====================
+        class Bullet {
+            constructor(x, y, direction, owner) {
+                this.x = x;
+                this.y = y;
+                this.velX = 1600 * direction;
+                this.velY = 0;
+                this.owner = owner;
+                this.width = 10;
+                this.height = 5;
+                this.bounces = 0;
+            }
+
+            update(dt, platforms) {
+                this.x += this.velX * dt;
+                this.y += this.velY * dt;
+
+                // Wall bounces
+                for (let p of platforms) {
+                    if (this.collidesWith(p)) {
+                        if (this.bounces > 0) {
+                            if (this.velX > 0) {
+                                this.x = p.x - this.width;
+                                this.velX *= -1.2;
+                            } else {
+                                this.x = p.x + p.width;
+                                this.velX *= -1.2;
+                            }
+                            this.bounces--;
+                        } else {
+                            return false;
+                        }
+                    }
+                }
+
+                if (this.x < 0 || this.x > WIDTH) return false;
+                return true;
+            }
+
+            collidesWith(rect) {
+                return !(this.x + this.width < rect.x ||
+                         this.x > rect.x + rect.width ||
+                         this.y + this.height < rect.y ||
+                         this.y > rect.y + rect.height);
+            }
+
+            draw() {
+                ctx.fillStyle = "rgb(255, 255, 0)";
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+            }
+        }
+
+        class Sword {
+            constructor(owner, target) {
+                this.owner = owner;
+                this.target = target;
+                this.elapsed = 0;
+                this.duration = 0.25;
+                this.range = owner.swordRange || 80;
+                this.hit = false;
+            }
+
+            update(dt) {
+                this.elapsed += dt;
+                if (this.elapsed > this.duration) return false;
+
+                const t = this.elapsed / this.duration;
+                const angle = -90 + t * 180;
+                const rad = angle * Math.PI / 180;
+
+                const originX = this.owner.x + this.owner.width / 2 + this.owner.facing * 20;
+                const originY = this.owner.y + this.owner.height / 2;
+                const tipX = originX + Math.cos(rad) * this.range * this.owner.facing;
+                const tipY = originY + Math.sin(rad) * this.range;
+
+                // Simple hit detection
+                if (!this.hit) {
+                    const dist = Math.hypot(
+                        this.target.x + this.target.width/2 - originX,
+                        this.target.y + this.target.height/2 - originY
+                    );
+                    if (dist < this.range && this.target.invul <= 0) {
+                        this.target.percent += this.owner.damage * 2;
+                        this.target.hitstun = 0.25;
+                        this.target.invul = 0.3;
+                        const dx = this.target.x - this.owner.x;
+                        const dir = dx > 0 ? 1 : -1;
+                        const kb = BASE_KB + Math.pow(this.target.percent, KB_EXPONENT) * KB_SCALING;
+                        this.target.velX = dir * kb;
+                        this.target.velY = -(400 + this.target.percent * 4);
+                        this.target.onGround = false;
+                        this.hit = true;
+                    }
+                }
+
+                this.tipX = tipX;
+                this.tipY = tipY;
+                this.originX = originX;
+                this.originY = originY;
+                return true;
+            }
+
+            draw() {
+                ctx.strokeStyle = "white";
+                ctx.lineWidth = 5;
+                ctx.beginPath();
+                ctx.moveTo(this.originX, this.originY);
+                ctx.lineTo(this.tipX, this.tipY);
+                ctx.stroke();
+            }
+        }
+
+        class Grenade {
+            constructor(x, y, direction, owner) {
+                this.x = x;
+                this.y = y;
+                this.velX = 800 * direction;
+                this.velY = -300;
+                this.owner = owner;
+                this.size = 8;
+                this.timer = 0.75;
+                this.exploded = false;
+            }
+
+            update(dt, platforms) {
+                this.timer -= dt;
+                this.velY += GRAVITY * dt;
+
+                this.x += this.velX * dt;
+                this.y += this.velY * dt;
+
+                // Platform collision
+                for (let p of platforms) {
+                    if (this.collidesWith(p)) {
+                        if (this.velX > 0) {
+                            this.x = p.x - this.size;
+                            this.velX *= -0.8;
+                        } else {
+                            this.x = p.x + p.width;
+                            this.velX *= -0.8;
+                        }
+                    }
+                }
+
+                if (this.timer <= 0 && !this.exploded) {
+                    this.explode();
+                    return false;
+                }
+                return true;
+            }
+
+            collidesWith(rect) {
+                return !(this.x + this.size < rect.x ||
+                         this.x - this.size > rect.x + rect.width ||
+                         this.y + this.size < rect.y ||
+                         this.y - this.size > rect.y + rect.height);
+            }
+
+            explode() {
+                this.exploded = true;
+                for (let target of [player1, player2]) {
+                    if (target === this.owner) continue;
+                    const dist = Math.hypot(target.x - this.x, target.y - this.y);
+                    if (dist < 100) {
+                        target.percent += 5;
+                        const dx = target.x - this.owner.x;
+                        const dir = dx > 0 ? 1 : -1;
+                        target.velX = dir * 400;
+                        target.velY = -300;
+                    }
+                }
+            }
+
+            draw() {
+                ctx.fillStyle = "rgb(255, 150, 50)";
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        // =====================
+        // PLATFORM CLASS
+        // =====================
+        class Platform {
+            constructor(x, y, width, height) {
+                this.x = x;
+                this.y = y;
+                this.width = width;
+                this.height = height;
+            }
+
+            draw() {
+                ctx.fillStyle = "rgb(200, 200, 200)";
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+            }
+        }
+
+        // =====================
+        // GAME STATE
+        // =====================
+        let player1, player2;
+        let platforms = [];
+        let projectiles = [];
+        let swords = [];
+        let player1Stocks = 3;
+        let player2Stocks = 3;
+
+        let gameState = "cardSelect"; // "cardSelect", "playing", "gameOver"
+        let currentPlayer = 1;
+        let firstPickDone = { 1: false, 2: false };
+
+        // =====================
+        // FUNCTIONS
+        // =====================
+        function generateMap() {
+            platforms = [];
+            const mainY = HEIGHT * 0.75;
+            platforms.push(new Platform(WIDTH / 4 - 150, mainY, 300, 30));
+            platforms.push(new Platform(WIDTH * 0.75 - 150, mainY, 300, 30));
+            platforms.push(new Platform(WIDTH / 2 - 200, mainY - 200, 400, 30));
+
+            for (let i = 0; i < 3; i++) {
+                const x = Math.random() * (WIDTH - 100);
+                const y = Math.random() * (HEIGHT - 300) + 100;
+                const w = Math.random() * 200 + 100;
+                platforms.push(new Platform(x, y, w, 20));
+            }
+        }
+
+        function spawnPlayers() {
+            player1 = new Player(WIDTH / 4, HEIGHT / 2, "rgb(255, 100, 100)", {
+                left: "KeyA",
+                right: "KeyD",
+                jump: "KeyW",
+                action: "KeyF"
+            });
+            player2 = new Player(WIDTH * 0.75, HEIGHT / 2, "rgb(100, 100, 255)", {
+                left: "ArrowLeft",
+                right: "ArrowRight",
+                jump: "ArrowUp",
+                action: "Enter"
+            });
+        }
+
+        function startCardSelect() {
+            gameState = "cardSelect";
+            currentPlayer = 1;
+            showCardSelection();
+        }
+
+        function showCardSelection() {
+            const modal = document.getElementById('cardModal');
+            const container = document.getElementById('cardContainer');
+            const title = document.getElementById('cardTitle');
+
+            title.textContent = `PLAYER ${currentPlayer} - Choose Your Card`;
+            container.innerHTML = '';
+
+            let validCards = Object.entries(CARDS).filter(([key, card]) => {
+                if (firstPickDone[currentPlayer] && card.type === "weapon") return false;
+                return true;
+            });
+
+            for (let [key, card] of validCards) {
+                const cardEl = document.createElement('div');
+                cardEl.className = 'card';
+                cardEl.style.background = card.color;
+                cardEl.innerHTML = `
+                    <div class="card-name">${card.name}</div>
+                    <div class="card-desc">${card.desc}</div>
+                `;
+                cardEl.onclick = () => selectCard(key);
+                container.appendChild(cardEl);
+            }
+
+            modal.classList.add('active');
+        }
+
+        function selectCard(cardKey) {
+            const card = CARDS[cardKey];
+            const player = currentPlayer === 1 ? player1 : player2;
+
+            card.effect(player);
+            player.cards.push(cardKey);
+
+            firstPickDone[currentPlayer] = true;
+
+            if (currentPlayer === 1) {
+                currentPlayer = 2;
+                showCardSelection();
+            } else {
+                document.getElementById('cardModal').classList.remove('active');
+                gameState = "playing";
+                updateUI();
+            }
+        }
+
+        function generateMap() {
+            platforms = [];
+            const mainY = HEIGHT * 0.75;
+            platforms.push(new Platform(WIDTH / 2 - 200, mainY, 400, 30));
+            platforms.push(new Platform(WIDTH / 4 - 80, mainY - 200, 160, 20));
+            platforms.push(new Platform(WIDTH * 0.75 - 80, mainY - 200, 160, 20));
+
+            for (let i = 0; i < 4; i++) {
+                const x = Math.random() * (WIDTH - 150);
+                const y = Math.random() * (HEIGHT - 300) + 100;
+                platforms.push(new Platform(x, y, 150, 20));
+            }
+        }
+
+        function updateUI() {
+            document.getElementById('p1Stock').textContent = `P1: ${player1Stocks}`;
+            document.getElementById('p2Stock').textContent = `P2: ${player2Stocks}`;
+            document.getElementById('p1Percent').textContent = `${Math.floor(player1.percent)}%`;
+            document.getElementById('p2Percent').textContent = `${Math.floor(player2.percent)}%`;
+        }
+
+        function checkDeath(player, playerNum) {
+            if (player.y > HEIGHT + 200) {
+                if (playerNum === 1) {
+                    player1Stocks--;
+                } else {
+                    player2Stocks--;
+                }
+
+                if (player1Stocks <= 0 || player2Stocks <= 0) {
+                    gameState = "gameOver";
+                    const winner = player1Stocks <= 0 ? 2 : 1;
+                    document.getElementById('gameOverText').textContent = `PLAYER ${winner} WINS!`;
+                    document.getElementById('gameOverModal').classList.add('active');
+                    return;
+                }
+
+                generateMap();
+                spawnPlayers();
+                player1.cards = [];
+                player2.cards = [];
+                player1.weapon = "gun";
+                player2.weapon = "gun";
+                player1.percent = 0;
+                player2.percent = 0;
+                projectiles = [];
+                swords = [];
+                startCardSelect();
+            }
+        }
+
+        // =====================
+        // INPUT HANDLING
+        // =====================
+        const keysPressed = {};
+
+        document.addEventListener('keydown', (e) => {
+            keysPressed[e.code] = true;
+
+            if (gameState !== "playing") return;
+
+            const players = [
+                { player: player1, codes: player1.controls },
+                { player: player2, codes: player2.controls }
+            ];
+
+            for (let { player, codes } of players) {
+                if (e.code === codes.action && player.cooldown <= 0 && player.hitstun <= 0) {
+                    if (player.weapon === "gun") {
+                        const spread = 5;
+                        for (let i = 0; i < player.multishot; i++) {
+                            const angleOffset = (i - (player.multishot - 1) / 2) * spread;
+                            const bullet = new Bullet(
+                                player.x + 20 * player.facing,
+                                player.y + 30,
+                                player.facing,
+                                player
+                            );
+                            bullet.velY = angleOffset * 10;
+                            projectiles.push(bullet);
+                        }
+                        player.cooldown = 0.2;
+                    } else if (player.weapon === "sword") {
+                        const target = player === player1 ? player2 : player1;
+                        swords.push(new Sword(player, target));
+                        player.cooldown = 0.5;
+                    } else if (player.weapon === "grenade") {
+                        projectiles.push(new Grenade(
+                            player.x + 20 * player.facing,
+                            player.y + 30,
+                            player.facing,
+                            player
+                        ));
+                        player.cooldown = 0.75;
+                    }
+                }
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keysPressed[e.code] = false;
+        });
+
+        document.getElementById('restartButton').addEventListener('click', () => {
+            document.getElementById('gameOverModal').classList.remove('active');
+            player1Stocks = 3;
+            player2Stocks = 3;
+            firstPickDone = { 1: false, 2: false };
+            generateMap();
+            spawnPlayers();
+            startCardSelect();
+        });
+
+        // =====================
+        // MAIN LOOP
+        // =====================
+        function update(dt) {
+            if (gameState !== "playing") return;
+
+            // Player movement
+            if (!player1.hitstun && player1.cooldown <= 0) {
+                if (keysPressed[player1.controls.left]) {
+                    player1.velX -= player1.speed * dt;
+                    player1.facing = -1;
+                }
+                if (keysPressed[player1.controls.right]) {
+                    player1.velX += player1.speed * dt;
+                    player1.facing = 1;
+                }
+            }
+
+            if (!player2.hitstun && player2.cooldown <= 0) {
+                if (keysPressed[player2.controls.left]) {
+                    player2.velX -= player2.speed * dt;
+                    player2.facing = -1;
+                }
+                if (keysPressed[player2.controls.right]) {
+                    player2.velX += player2.speed * dt;
+                    player2.facing = 1;
+                }
+            }
+
+            // Jumping
+            if (keysPressed[player1.controls.jump] && player1.onGround) {
+                player1.velY = JUMP_VELOCITY;
+                player1.onGround = false;
+            }
+            if (keysPressed[player2.controls.jump] && player2.onGround) {
+                player2.velY = JUMP_VELOCITY;
+                player2.onGround = false;
+            }
+
+            // Update players
+            if (!player1.update(dt, platforms)) checkDeath(player1, 1);
+            if (!player2.update(dt, platforms)) checkDeath(player2, 2);
+
+            // Update projectiles
+            for (let i = projectiles.length - 1; i >= 0; i--) {
+                const proj = projectiles[i];
+                if (!proj.update(dt, platforms)) {
+                    projectiles.splice(i, 1);
+                    continue;
+                }
+
+                const target = proj.owner === player1 ? player2 : player1;
+                if (proj.collidesWith({
+                    x: target.x,
+                    y: target.y,
+                    width: target.width,
+                    height: target.height
+                }) && target.invul <= 0) {
+                    target.percent += proj.owner.damage;
+                    target.hitstun = 0.25;
+                    target.invul = 0.3;
+                    const dx = target.x - proj.owner.x;
+                    const dir = dx > 0 ? 1 : -1;
+                    const kb = BASE_KB + Math.pow(target.percent, KB_EXPONENT) * KB_SCALING;
+                    target.velX = dir * kb;
+                    target.velY = -(400 + target.percent * 4);
+                    target.onGround = false;
+
+                    if (proj instanceof Grenade) {
+                        proj.explode();
+                    }
+
+                    projectiles.splice(i, 1);
+                }
+            }
+
+            // Update swords
+            for (let i = swords.length - 1; i >= 0; i--) {
+                if (!swords[i].update(dt)) {
+                    swords.splice(i, 1);
+                }
+            }
+
+            updateUI();
+        }
+
+        function draw() {
+            ctx.fillStyle = "rgb(15, 52, 96)";
+            ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+            for (let p of platforms) p.draw();
+            for (let proj of projectiles) proj.draw();
+            for (let sword of swords) sword.draw();
+
+            player1.draw();
+            player2.draw();
+        }
+
+        function gameLoop(currentTime) {
+            frameTime = (currentTime - (frameTime || currentTime)) / 1000;
+            update(frameTime);
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // =====================
+        // START GAME
+        // =====================
+        generateMap();
+        spawnPlayers();
+        startCardSelect();
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>
